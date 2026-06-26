@@ -15,6 +15,13 @@ function deriveTitle(text) {
   return t.length > 40 ? t.slice(0, 40).trimEnd() + "…" : t;
 }
 
+// Curated Anthropic models (the picker lists these without an API round-trip).
+const ANTHROPIC_MODELS = [
+  "claude-opus-4-8",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5",
+];
+
 export default function Page() {
   const store = useChatStore();
   const {
@@ -46,6 +53,7 @@ export default function Page() {
   const inputRef = useRef(null);
 
   const messages = useMemo(() => active?.messages ?? [], [active]);
+  const provider = active?.provider ?? "ollama";
   const model = active?.model ?? "";
   const params = active?.params ?? {};
 
@@ -76,6 +84,13 @@ export default function Page() {
     if (raw === "" || raw == null) delete next[key];
     else next[key] = Number(raw);
     setActiveField("params", next);
+  }
+
+  // Picker values are "<provider>::<model>" (model names contain single colons).
+  function selectModel(value) {
+    const i = value.indexOf("::");
+    setActiveField("provider", value.slice(0, i));
+    setActiveField("model", value.slice(i + 2));
   }
 
   async function send(e) {
@@ -224,20 +239,34 @@ export default function Page() {
           </h1>
           <div className="flex items-center gap-2">
             <select
-              value={model}
-              onChange={(e) => setActiveField("model", e.target.value)}
+              value={`${provider}::${model}`}
+              onChange={(e) => selectModel(e.target.value)}
               disabled={streaming || !hydrated}
-              className={inputCls + " max-w-[14rem] disabled:opacity-50"}
-              title={modelsError ? "Couldn’t load model list" : "Model"}
+              className={inputCls + " max-w-[15rem] disabled:opacity-50"}
+              title="Provider / model"
             >
-              {model && !models.includes(model) && (
-                <option value={model}>{model} (not installed)</option>
-              )}
-              {models.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
+              {model &&
+                !(provider === "ollama" && models.includes(model)) &&
+                !(provider === "anthropic" && ANTHROPIC_MODELS.includes(model)) && (
+                  <option value={`${provider}::${model}`}>
+                    {model}
+                    {provider === "ollama" ? " (not installed)" : ""}
+                  </option>
+                )}
+              <optgroup label="Ollama (local)">
+                {models.map((n) => (
+                  <option key={`o:${n}`} value={`ollama::${n}`}>
+                    {n}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Anthropic (cloud)">
+                {ANTHROPIC_MODELS.map((m) => (
+                  <option key={`a:${m}`} value={`anthropic::${m}`}>
+                    {m}
+                  </option>
+                ))}
+              </optgroup>
             </select>
             <button
               type="button"
@@ -270,33 +299,51 @@ export default function Page() {
                 className={inputCls + " w-full resize-y"}
               />
             </label>
-            <div className="flex gap-3">
-              <label className="flex-1">
-                <span className="mb-1 block text-xs opacity-60">temperature</span>
+            {provider === "anthropic" ? (
+              <label className="block">
+                <span className="mb-1 block text-xs opacity-60">max_tokens</span>
                 <input
                   type="number"
-                  step="0.1"
-                  min="0"
-                  max="2"
-                  value={params.temperature ?? ""}
-                  onChange={(e) => setParam("temperature", e.target.value)}
-                  placeholder="model default"
+                  step="256"
+                  min="1"
+                  value={params.max_tokens ?? ""}
+                  onChange={(e) => setParam("max_tokens", e.target.value)}
+                  placeholder="4096"
                   className={inputCls + " w-full"}
                 />
+                <span className="mt-1 block text-xs opacity-40">
+                  temperature is omitted for Anthropic models.
+                </span>
               </label>
-              <label className="flex-1">
-                <span className="mb-1 block text-xs opacity-60">num_ctx</span>
-                <input
-                  type="number"
-                  step="512"
-                  min="0"
-                  value={params.num_ctx ?? ""}
-                  onChange={(e) => setParam("num_ctx", e.target.value)}
-                  placeholder="model default"
-                  className={inputCls + " w-full"}
-                />
-              </label>
-            </div>
+            ) : (
+              <div className="flex gap-3">
+                <label className="flex-1">
+                  <span className="mb-1 block text-xs opacity-60">temperature</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="2"
+                    value={params.temperature ?? ""}
+                    onChange={(e) => setParam("temperature", e.target.value)}
+                    placeholder="model default"
+                    className={inputCls + " w-full"}
+                  />
+                </label>
+                <label className="flex-1">
+                  <span className="mb-1 block text-xs opacity-60">num_ctx</span>
+                  <input
+                    type="number"
+                    step="512"
+                    min="0"
+                    value={params.num_ctx ?? ""}
+                    onChange={(e) => setParam("num_ctx", e.target.value)}
+                    placeholder="model default"
+                    className={inputCls + " w-full"}
+                  />
+                </label>
+              </div>
+            )}
           </div>
         )}
 

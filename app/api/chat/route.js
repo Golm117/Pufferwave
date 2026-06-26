@@ -201,13 +201,16 @@ async function* translateOllama(body) {
 // --- Anthropic (official SDK, server-side) ---
 
 function mapAnthropicError(err) {
+  // SDK APIError carries the parsed body on err.error: { type, error: { type, message } }.
+  const message =
+    err?.error?.error?.message || err?.message || "Anthropic request failed.";
   const status = err?.status;
-  if (status === 401 || status === 403) return { kind: "auth", message: err?.message };
-  if (status === 429) return { kind: "rate_limited", message: err?.message };
-  if (status >= 500) return { kind: "interrupted", message: err?.message };
+  if (status === 401 || status === 403) return { kind: "auth", message };
+  if (status === 429) return { kind: "rate_limited", message };
+  if (status >= 500) return { kind: "interrupted", message };
   // 404 (bad model) / 400 (bad request) — surface Anthropic's own message, not the
   // Ollama-flavored model_missing hint.
-  return { kind: "unknown", message: err?.message || "Anthropic request failed." };
+  return { kind: "unknown", message };
 }
 
 async function anthropicChat({ model, systemPrompt, params, messages }, signal) {
