@@ -4,24 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This is a **from-scratch build**. As of now the repo contains only the spec:
-[`ollama-harness-mvp-prd.md`](ollama-harness-mvp-prd.md). No application code, `package.json`,
-or build tooling exists yet. The PRD is the authoritative source for architecture and scope —
-read it before building. When code lands, update the Commands section below with the real scripts.
+Branded **Pufferwave**. The MVP is **built and shipped** — all five PRD slices (0–4) are on
+`main`. The app is a working local Ollama chat UI: streaming, model picker, system prompt +
+params, multi-conversation sidebar, versioned `localStorage` persistence. The PRD
+([`ollama-harness-mvp-prd.md`](ollama-harness-mvp-prd.md)) remains the authoritative source for
+architecture and scope; the load-bearing rules below are non-negotiable.
+
+Stack as built: **Next.js 16** (App Router) + React 19 + Tailwind v4, plain JS. (The PRD said
+"Next 15"; 16 was current at build time and changes nothing architecturally.)
 
 ## What this is
 
-A local chat UI (Next.js 15 App Router, React, Tailwind) that streams responses from a locally
-hosted **Ollama** instance (`http://localhost:11434`). Persistence is `localStorage` only for the
-MVP — no database, no auth, no multi-user.
+A local chat UI that streams responses from a locally hosted **Ollama** instance
+(`http://localhost:11434`). Persistence is `localStorage` only for the MVP — no database, no auth,
+no multi-user.
 
-## Commands (planned — Next.js defaults until `package.json` exists)
+## Commands
 
 ```bash
-npm run dev      # local dev server
+npm run dev      # local dev server (http://localhost:3000)
 npm run build    # production build
-npm run lint     # lint
+npm run start    # serve the production build
+npm run lint     # eslint
 ```
+
+`.claude/launch.json` defines a `pufferwave` preview server (`npm run dev` on :3000).
 
 Ollama must be running locally for the app to function: `ollama serve`, and pull at least one
 model (e.g. `ollama pull llama3`). `GET /api/tags` surfaces installed models into the picker.
