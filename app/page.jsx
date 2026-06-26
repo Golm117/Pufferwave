@@ -101,6 +101,7 @@ export default function Page() {
       let acc = "";
       for await (const delta of streamChat({
         messages: history,
+        provider: active.provider,
         model,
         systemPrompt: active.systemPrompt,
         params: active.params,
