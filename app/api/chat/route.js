@@ -10,10 +10,13 @@
 // the client can throw the right error kind before any 200 stream is opened. Once the
 // stream is open, mid-stream failures surface as a uniform error line.
 
+import Anthropic from "@anthropic-ai/sdk";
 import { OLLAMA_HOST } from "@/lib/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const ANTHROPIC_DEFAULT_MAX_TOKENS = 4096;
 
 const enc = new TextEncoder();
 
@@ -64,12 +67,12 @@ export async function POST(request) {
 
   const { provider = "ollama" } = payload;
   if (provider === "ollama") return ollamaChat(payload, request.signal);
-  // Anthropic lands in Slice B.
+  if (provider === "anthropic") return anthropicChat(payload, request.signal);
   return Response.json(
     {
       error: {
         kind: "bad_request",
-        message: `Provider “${provider}” is not available yet.`,
+        message: `Unknown provider “${provider}”.`,
       },
     },
     { status: 400 },
@@ -193,4 +196,71 @@ async function* translateOllama(body) {
       message: "The stream ended unexpectedly.",
     };
   }
+}
+
+// --- Anthropic (official SDK, server-side) ---
+
+function mapAnthropicError(err) {
+  const status = err?.status;
+  if (status === 401 || status === 403) return { kind: "auth", message: err?.message };
+  if (status === 429) return { kind: "rate_limited", message: err?.message };
+  if (status >= 500) return { kind: "interrupted", message: err?.message };
+  // 404 (bad model) / 400 (bad request) — surface Anthropic's own message, not the
+  // Ollama-flavored model_missing hint.
+  return { kind: "unknown", message: err?.message || "Anthropic request failed." };
+}
+
+async function anthropicChat({ model, systemPrompt, params, messages }, signal) {
+  // Secret stays server-side; never touches the browser or localStorage.
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
+    return Response.json(
+      {
+        error: {
+          kind: "auth",
+          message: "ANTHROPIC_API_KEY is not set on the server (.env.local).",
+        },
+      },
+      { status: 401 },
+    );
+  }
+
+  // Anthropic takes system as a TOP-LEVEL param (not a message). Messages are user/
+  // assistant only, content as strings. No temperature — Opus 4.8/4.7 and Fable 5 400 on it.
+  const wire = (messages || [])
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({ role: m.role, content: m.content }));
+
+  const maxTokens =
+    params?.max_tokens != null && params.max_tokens !== ""
+      ? Number(params.max_tokens)
+      : ANTHROPIC_DEFAULT_MAX_TOKENS;
+
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    messages: wire,
+    ...(systemPrompt && systemPrompt.trim() ? { system: systemPrompt } : {}),
+  };
+
+  const client = new Anthropic();
+
+  return uniformResponse(async function* () {
+    try {
+      const stream = client.messages.stream(body, { signal });
+      for await (const event of stream) {
+        if (
+          event.type === "content_block_delta" &&
+          event.delta?.type === "text_delta" &&
+          event.delta.text
+        ) {
+          yield { type: "delta", text: event.delta.text };
+        }
+      }
+      yield { type: "done" };
+    } catch (err) {
+      if (err?.name === "AbortError" || signal?.aborted) return; // client stopped
+      const { kind, message } = mapAnthropicError(err);
+      yield { type: "error", kind, message };
+    }
+  });
 }
