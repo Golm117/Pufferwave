@@ -30,23 +30,32 @@ npm run lint     # eslint
 
 `.claude/launch.json` defines a `pufferwave` preview server (`npm run dev` on :3000).
 
-Ollama must be running locally for the app to function: `ollama serve`, and pull at least one
-model (e.g. `ollama pull llama3`). `GET /api/tags` surfaces installed models into the picker.
+Two backends are supported, **per conversation**:
+- **Ollama (local)** — `ollama serve` must be running with at least one model pulled; `GET /api/tags`
+  surfaces installed models into the picker.
+- **Anthropic (cloud)** — set `ANTHROPIC_API_KEY` in `.env.local` (gitignored). The official
+  `@anthropic-ai/sdk` runs **server-side** in the route handler; the key never reaches the browser.
 
 ## Architecture — the load-bearing rules
 
 These are non-negotiable and painful to retrofit. Honor them even for "quick" changes.
 
-1. **All inference goes through `lib/inference.js`.** No React component calls Ollama directly.
-   Streaming, request shaping, error handling, and the `AbortController` signal all live in this
-   one module. The backend endpoint is a single config value, never hardcoded at call sites —
-   this is what makes a future backend swap (llama.cpp `llama-server`, AirLLM shim) a config
-   change instead of a refactor.
+1. **All inference goes through `lib/inference.js` (client) + `app/api/chat/route.js` (server).**
+   No React component calls a backend directly. The client sends a **provider-neutral payload**
+   (`{provider, model, systemPrompt, params, messages}`) and parses ONE **uniform NDJSON stream**
+   (`{type:"delta"|"done"|"error"}`). The route dispatches by `provider`, shapes the real request
+   per backend, and normalizes the response into that uniform stream. Adding a backend = a new
+   branch in the route + a normalizer, not a refactor. The replay filter stays client-side; request
+   shaping (system prompt, params) is the route's job.
 
-2. **The browser never hits port 11434.** All browser→Ollama traffic is proxied through Next.js
-   server route handlers (`app/api/chat/route.js`, `app/api/tags/route.js`) to avoid CORS.
-   `/api/chat` proxies Ollama `POST /api/chat` with `stream: true`; `/api/tags` proxies
-   `GET /api/tags`.
+2. **The browser never hits a backend directly.** All traffic is proxied through Next.js server
+   route handlers (`app/api/chat/route.js`, `app/api/tags/route.js`) — avoids CORS for Ollama and
+   keeps the Anthropic key server-side. `/api/tags` proxies Ollama `GET /api/tags`.
+
+   **Per-provider shaping (in the route):** Ollama takes the system prompt as a leading `system`
+   *message* and `temperature`/`num_ctx` as `options`; Anthropic takes system as a **top-level
+   `system` param**, requires `max_tokens`, and **rejects `temperature`** (Opus 4.8/4.7 + Fable 400
+   on it — so the route omits it). `Conversation.provider` is `"ollama" | "anthropic"`.
 
 3. **The server is stateless about the conversation.** The client owns history and resends the
    **entire `messages` array on every request**. Context-window limits and truncation all flow
@@ -73,9 +82,12 @@ app/
   api/tags/route.js   # proxy to Ollama /api/tags (model list)
   page.jsx            # the whole UI, one file, early on
 lib/
-  inference.js        # ALL backend calls; endpoint behind config
+  inference.js        # client: neutral payload out, uniform stream parsed in
   store.js            # conversation state + versioned localStorage persistence
 ```
+
+`app/api/chat/route.js` holds the per-provider branches (`ollamaChat`, `anthropicChat`) and the
+uniform-stream normalizer. `.env.local` (gitignored) holds `ANTHROPIC_API_KEY`.
 
 Resist early: component libraries, global state managers, auth, a database. (shadcn/ui is a fine
 *later* choice for chrome polish, not part of the MVP.)
@@ -87,6 +99,10 @@ half-wired, non-running state. The PRD defines the slices: Slice 0 (prove the st
 route), Slice 1 (dumbest streaming chat, hardcoded model, `status` + `AbortController` wired in),
 Slice 2 (real Conversation/Message shapes + versioned persistence), Slice 3 (model picker, system
 prompt, params), Slice 4 (multi-conversation sidebar CRUD).
+
+Post-MVP, slices A–C added the **Anthropic provider**: A (provider-neutral payload + server-side
+uniform-stream normalizer), B (the `@anthropic-ai/sdk` route branch), C (provider-grouped picker +
+per-provider params). Same vertical-slice discipline — each runnable, Ollama never broke.
 
 ## Out of scope for MVP
 
