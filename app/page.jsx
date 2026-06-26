@@ -1,59 +1,45 @@
 "use client";
 
-// Slice 1 — dumbest possible streaming chat.
-// Single page, hardcoded model, no history persistence yet. The "bones" are wired:
-// message `status` lifecycle, an AbortController + Stop button, the full history resent
-// every request (the server is stateless), and explicit error states. Partial assistant
-// output is discarded on abort AND error; status lives only during the in-flight turn.
+// Slice 2 — real Conversation/Message shapes, persisted to localStorage (versioned).
+// Still single-conversation: the store auto-creates one and the page reads/writes the
+// active conversation through the hook. Streaming patches the assistant message in state
+// but does NOT persist per delta; persistence happens when the turn completes (or on
+// structural changes). Partial assistant turns are still discarded on abort/error.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { streamChat, InferenceError } from "@/lib/inference";
-
-const MODEL = "qwen2.5-coder:3b"; // hardcoded for Slice 1; the picker arrives in Slice 3
+import { useChatStore, makeMessage, logFailure } from "@/lib/store";
 
 export default function Page() {
-  const [messages, setMessages] = useState([]);
+  const { hydrated, active, addMessage, patchMessage, removeMessage } =
+    useChatStore();
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState(null);
   const abortRef = useRef(null);
   const listRef = useRef(null);
 
-  // Keep the latest turn in view as tokens stream in.
+  const messages = useMemo(() => active?.messages ?? [], [active]);
+  const model = active?.model ?? "";
+
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [messages]);
 
-  const patch = (id, p) =>
-    setMessages((ms) => ms.map((m) => (m.id === id ? { ...m, ...p } : m)));
-  const drop = (id) => setMessages((ms) => ms.filter((m) => m.id !== id));
-
   async function send(e) {
     e?.preventDefault();
     const text = input.trim();
-    if (!text || streaming) return;
+    if (!text || streaming || !active) return;
 
     setError(null);
-    const now = Date.now();
-    const userMsg = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: text,
-      status: "complete",
-      createdAt: now,
-    };
-    const asstMsg = {
-      id: crypto.randomUUID(),
-      role: "assistant",
-      content: "",
-      status: "streaming",
-      createdAt: now,
-    };
+    const userMsg = makeMessage("user", text, "complete");
+    const asstMsg = makeMessage("assistant", "", "streaming");
 
-    // Resend the entire history; the replay filter inside inference.js decides what
-    // actually goes upstream.
+    // Resend the entire history; the replay filter in inference.js decides what goes
+    // upstream. Build the array locally — state updates are async.
     const history = [...messages, userMsg];
-    setMessages([...history, asstMsg]);
+    addMessage(userMsg); // persist the user turn
+    addMessage(asstMsg, { persist: false }); // placeholder never persisted
     setInput("");
     setStreaming(true);
 
@@ -64,19 +50,21 @@ export default function Page() {
       let acc = "";
       for await (const delta of streamChat({
         messages: history,
-        model: MODEL,
+        model,
+        systemPrompt: active.systemPrompt,
+        params: active.params,
         signal: controller.signal,
       })) {
         acc += delta;
-        patch(asstMsg.id, { content: acc });
+        patchMessage(asstMsg.id, { content: acc }, { persist: false });
       }
-      patch(asstMsg.id, { status: "complete" });
+      patchMessage(asstMsg.id, { status: "complete" }); // terminal -> persist
     } catch (err) {
       const kind = err instanceof InferenceError ? err.kind : "unknown";
-      // Discard the partial assistant turn on both abort and error.
-      drop(asstMsg.id);
+      removeMessage(asstMsg.id); // discard the partial
       if (kind !== "aborted") {
         setError({ kind, message: err.message });
+        logFailure({ kind, message: err.message, model });
       }
     } finally {
       setStreaming(false);
@@ -94,14 +82,11 @@ export default function Page() {
         <h1 className="bg-gradient-to-r from-sky-400 via-emerald-400 to-amber-400 bg-clip-text text-xl font-light tracking-[0.35em] text-transparent">
           PUFFERWAVE
         </h1>
-        <span className="font-mono text-xs opacity-50">{MODEL}</span>
+        <span className="font-mono text-xs opacity-50">{model}</span>
       </header>
 
-      <div
-        ref={listRef}
-        className="flex-1 space-y-4 overflow-y-auto py-2"
-      >
-        {messages.length === 0 && (
+      <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto py-2">
+        {hydrated && messages.length === 0 && (
           <p className="mt-10 text-center text-sm opacity-40">
             Start the conversation below.
           </p>
@@ -109,7 +94,9 @@ export default function Page() {
         {messages.map((m) => (
           <div
             key={m.id}
-            className={m.role === "user" ? "flex justify-end" : "flex justify-start"}
+            className={
+              m.role === "user" ? "flex justify-end" : "flex justify-start"
+            }
           >
             <div
               className={
@@ -159,7 +146,7 @@ export default function Page() {
         ) : (
           <button
             type="submit"
-            disabled={!input.trim()}
+            disabled={!input.trim() || !hydrated}
             className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-40"
           >
             Send
