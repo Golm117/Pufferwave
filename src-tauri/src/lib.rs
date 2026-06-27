@@ -1,6 +1,12 @@
+mod chat;
+
+use chat::Cancels;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .manage(Cancels::default())
+    .invoke_handler(tauri::generate_handler![chat::chat, chat::cancel_chat])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
