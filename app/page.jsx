@@ -17,6 +17,7 @@ import {
   clearAnthropicKey,
 } from "@/lib/inference";
 import { useChatStore, makeMessage, logFailure } from "@/lib/store";
+import ModifyDialog from "./modify";
 
 function deriveTitle(text) {
   const t = text.trim().replace(/\s+/g, " ");
@@ -58,6 +59,7 @@ export default function Page() {
   const [editTitle, setEditTitle] = useState("");
   const [keySet, setKeySet] = useState(false);
   const [keyInput, setKeyInput] = useState("");
+  const [modifying, setModifying] = useState(false);
   const desktop = isDesktop();
   const abortRef = useRef(null);
   const listRef = useRef(null);
@@ -321,6 +323,16 @@ export default function Page() {
             >
               ⚙
             </button>
+            {desktop && hydrated && (
+              <button
+                type="button"
+                onClick={() => setModifying(true)}
+                className={inputCls + " opacity-70 hover:opacity-100"}
+                title="Modify Pufferwave (self-edit)"
+              >
+                🛠
+              </button>
+            )}
           </div>
         </header>
 
@@ -519,13 +531,15 @@ export default function Page() {
             <button
               type="submit"
               disabled={!input.trim() || !hydrated}
-              className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-40"
+              className="rounded-xl bg-violet-500 px-4 py-2 text-sm font-medium text-white hover:bg-violet-600 disabled:opacity-40"
             >
               Send
             </button>
           )}
         </form>
       </main>
+
+      {desktop && modifying && <ModifyDialog onClose={() => setModifying(false)} />}
     </div>
   );
 }

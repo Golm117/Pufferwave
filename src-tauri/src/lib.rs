@@ -1,4 +1,5 @@
 mod chat;
+mod selfedit;
 
 use chat::Cancels;
 
@@ -13,7 +14,12 @@ pub fn run() {
       chat::list_models,
       chat::set_anthropic_key,
       chat::anthropic_key_set,
-      chat::clear_anthropic_key
+      chat::clear_anthropic_key,
+      selfedit::modify,
+      selfedit::repo_status,
+      selfedit::repo_diff,
+      selfedit::repo_commit,
+      selfedit::repo_revert
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
