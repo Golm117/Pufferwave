@@ -537,6 +537,9 @@ export default function Page() {
             </button>
           )}
         </form>
+        <p className="pb-4 -mt-2 text-center text-xs text-zinc-400">
+          self-edited ✨
+        </p>
       </main>
 
       {desktop && modifying && <ModifyDialog onClose={() => setModifying(false)} />}
