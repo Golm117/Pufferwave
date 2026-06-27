@@ -24,6 +24,81 @@ function deriveTitle(text) {
   return t.length > 40 ? t.slice(0, 40).trimEnd() + "…" : t;
 }
 
+// Speedrun-style stopwatch: counts up in HH:MM:SS.cc, click to start/pause,
+// "reset" to zero it. Drives the clock off wall time so it stays accurate
+// across tab throttling rather than accumulating setInterval drift.
+function SpeedrunTimer() {
+  const [elapsed, setElapsed] = useState(0); // ms
+  const [running, setRunning] = useState(false);
+  const startRef = useRef(0); // wall time the current run began
+  const baseRef = useRef(0); // ms banked before the current run
+
+  useEffect(() => {
+    if (!running) return;
+    startRef.current = performance.now();
+    let raf;
+    const tick = () => {
+      setElapsed(baseRef.current + (performance.now() - startRef.current));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [running]);
+
+  function toggle() {
+    if (running) {
+      baseRef.current += performance.now() - startRef.current;
+      setRunning(false);
+    } else {
+      setRunning(true);
+    }
+  }
+
+  function reset(e) {
+    e.stopPropagation();
+    baseRef.current = 0;
+    setElapsed(0);
+    if (running) startRef.current = performance.now();
+  }
+
+  const cc = Math.floor((elapsed % 1000) / 10);
+  const totalSec = Math.floor(elapsed / 1000);
+  const ss = totalSec % 60;
+  const mm = Math.floor(totalSec / 60) % 60;
+  const hh = Math.floor(totalSec / 3600);
+  const p2 = (n) => String(n).padStart(2, "0");
+
+  return (
+    <div className="border-t border-black/10 px-3 py-2 dark:border-white/10">
+      <button
+        type="button"
+        onClick={toggle}
+        title={running ? "Pause" : "Start"}
+        className="flex w-full items-center gap-2 rounded-lg px-1 py-1 hover:bg-black/5 dark:hover:bg-white/5"
+      >
+        <span
+          className={
+            "h-2 w-2 shrink-0 rounded-full " +
+            (running ? "animate-pulse bg-emerald-500" : "bg-zinc-400")
+          }
+        />
+        <span className="font-mono text-sm tabular-nums tracking-tight">
+          {hh > 0 ? `${p2(hh)}:` : ""}
+          {p2(mm)}:{p2(ss)}
+          <span className="opacity-50">.{p2(cc)}</span>
+        </span>
+        <span
+          onClick={reset}
+          className="ml-auto text-xs opacity-40 hover:opacity-90"
+          title="Reset"
+        >
+          ↺
+        </span>
+      </button>
+    </div>
+  );
+}
+
 // Curated Anthropic models (the picker lists these without an API round-trip).
 const ANTHROPIC_MODELS = [
   "claude-opus-4-8",
@@ -275,6 +350,7 @@ export default function Page() {
             );
           })}
         </nav>
+        <SpeedrunTimer />
       </aside>
 
       {/* Chat column */}
