@@ -4,58 +4,61 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Branded **Pufferwave**. The MVP is **built and shipped** — all five PRD slices (0–4) are on
-`main`. The app is a working local Ollama chat UI: streaming, model picker, system prompt +
-params, multi-conversation sidebar, versioned `localStorage` persistence. The PRD
-([`ollama-harness-mvp-prd.md`](ollama-harness-mvp-prd.md)) remains the authoritative source for
-architecture and scope; the load-bearing rules below are non-negotiable.
+Branded **Pufferwave**. Shipped: the MVP (PRD slices 0–4) + a dual-provider feature (slices A–C)
++ a **Rust-native Tauri v2 desktop app** (slices T0–T3). The app is a standalone macOS desktop
+chat client — streaming, provider/model picker, system prompt + params, multi-conversation sidebar.
+The PRD ([`ollama-harness-mvp-prd.md`](ollama-harness-mvp-prd.md)) is the original spec; the
+load-bearing rules below reflect the current (desktop) architecture and are non-negotiable.
 
-Stack as built: **Next.js 16** (App Router) + React 19 + Tailwind v4, plain JS. (The PRD said
-"Next 15"; 16 was current at build time and changes nothing architecturally.)
+Stack: **React 19 + Next.js 16** (App Router, **static export**) for the UI, rendered inside a
+**Tauri v2** webview with a **Rust** backend. Plain JS frontend. The web/server path (Next route
+handlers) was removed in T3 — inference now runs through Rust commands.
 
 ## What this is
 
-A local chat UI that streams responses from a locally hosted **Ollama** instance
-(`http://localhost:11434`). Persistence is `localStorage` only for the MVP — no database, no auth,
-no multi-user.
+A standalone desktop chat client (no Node at runtime). Two backends, **per conversation**:
+- **Ollama (local)** — `ollama serve` running with at least one model pulled.
+- **Anthropic (cloud)** — Claude via the Messages API; the key lives in the **macOS keychain**
+  (set in-app under ⚙ Settings), not on disk.
 
 ## Commands
 
+Rust toolchain prerequisite; this network needs HTTP/1.1 for cargo:
 ```bash
-npm run dev      # local dev server (http://localhost:3000)
-npm run build    # production build
-npm run start    # serve the production build
-npm run lint     # eslint
+export PATH="$HOME/.cargo/bin:$PATH" CARGO_HTTP_MULTIPLEXING=false
+npm run tauri dev      # run the desktop app (compiles Rust, opens the window)
+npm run tauri build    # build the standalone .app + .dmg (release)
+npm run lint           # eslint
+npm run build          # static export only (out/) — used by `tauri build`
 ```
 
-`.claude/launch.json` defines a `pufferwave` preview server (`npm run dev` on :3000).
-
-Two backends are supported, **per conversation**:
-- **Ollama (local)** — `ollama serve` must be running with at least one model pulled; `GET /api/tags`
-  surfaces installed models into the picker.
-- **Anthropic (cloud)** — set `ANTHROPIC_API_KEY` in `.env.local` (gitignored). The official
-  `@anthropic-ai/sdk` runs **server-side** in the route handler; the key never reaches the browser.
+Build artifacts land in `src-tauri/target/release/bundle/` (`Pufferwave.app`, `*.dmg`). The bundle
+is **ad-hoc signed** — on another Mac, Gatekeeper warns; right-click → Open (or notarize with an
+Apple Developer account, out of scope).
 
 ## Architecture — the load-bearing rules
 
 These are non-negotiable and painful to retrofit. Honor them even for "quick" changes.
 
-1. **All inference goes through `lib/inference.js` (client) + `app/api/chat/route.js` (server).**
+1. **All inference goes through `lib/inference.js` (client) + `src-tauri/src/chat.rs` (Rust).**
    No React component calls a backend directly. The client sends a **provider-neutral payload**
-   (`{provider, model, systemPrompt, params, messages}`) and parses ONE **uniform NDJSON stream**
-   (`{type:"delta"|"done"|"error"}`). The route dispatches by `provider`, shapes the real request
-   per backend, and normalizes the response into that uniform stream. Adding a backend = a new
-   branch in the route + a normalizer, not a refactor. The replay filter stays client-side; request
-   shaping (system prompt, params) is the route's job.
+   (`{provider, model, systemPrompt, params, messages}`) and consumes ONE **uniform event stream**
+   (`{type:"delta"|"done"|"error"}`). `streamChat` dispatches on `isTauri()`: the desktop transport
+   `invoke("chat", …)` streams uniform events over a Tauri ipc `Channel`; a `fetch` transport for a
+   browser build is kept but its API routes were removed in T3. The Rust `chat` command dispatches
+   by `provider`, shapes the request per backend, and emits the uniform events. Adding a backend =
+   a new branch in `chat.rs`. The replay filter stays client-side; request shaping is Rust's job.
 
-2. **The browser never hits a backend directly.** All traffic is proxied through Next.js server
-   route handlers (`app/api/chat/route.js`, `app/api/tags/route.js`) — avoids CORS for Ollama and
-   keeps the Anthropic key server-side. `/api/tags` proxies Ollama `GET /api/tags`.
+2. **Secrets and backends never touch the browser/webview JS.** The Rust process owns the network:
+   it talks to Ollama (`http://localhost:11434`) and Anthropic (`https://api.anthropic.com`). The
+   Anthropic key is read from the **OS keychain** (`keyring` crate; `set/clear/anthropic_key_set`
+   commands), falling back to `ANTHROPIC_API_KEY` env. Cancellation is a per-request
+   `CancellationToken` in managed state; `cancel_chat` drops the upstream stream.
 
-   **Per-provider shaping (in the route):** Ollama takes the system prompt as a leading `system`
-   *message* and `temperature`/`num_ctx` as `options`; Anthropic takes system as a **top-level
-   `system` param**, requires `max_tokens`, and **rejects `temperature`** (Opus 4.8/4.7 + Fable 400
-   on it — so the route omits it). `Conversation.provider` is `"ollama" | "anthropic"`.
+   **Per-provider shaping (in `chat.rs`):** Ollama takes the system prompt as a leading `system`
+   *message* and `temperature`/`num_ctx` as `options` (NDJSON stream); Anthropic takes system as a
+   **top-level `system` param**, requires `max_tokens`, **omits `temperature`** (Opus 4.8/4.7 +
+   Fable 400 on it), and is parsed from SSE. `Conversation.provider` is `"ollama" | "anthropic"`.
 
 3. **The server is stateless about the conversation.** The client owns history and resends the
    **entire `messages` array on every request**. Context-window limits and truncation all flow
@@ -74,23 +77,25 @@ These are non-negotiable and painful to retrofit. Honor them even for "quick" ch
 7. **`meta` on Message is reserved and stays empty** — it's a stub home for a future logging slice.
    Don't populate it.
 
-## Intended file layout (keep flat early)
+## File layout
 
 ```
 app/
-  api/chat/route.js   # proxy + stream to Ollama /api/chat
-  api/tags/route.js   # proxy to Ollama /api/tags (model list)
-  page.jsx            # the whole UI, one file, early on
+  page.jsx            # the whole UI, one file (static-exported into the webview)
+  layout.js
 lib/
-  inference.js        # client: neutral payload out, uniform stream parsed in
-  store.js            # conversation state + versioned localStorage persistence
+  inference.js        # client: isTauri() dispatch; invoke("chat"/"list_models") or fetch
+  store.js            # conversation state + versioned persistence
+src-tauri/
+  src/chat.rs         # Rust backend: chat (ollama + anthropic), list_models, keychain cmds
+  src/lib.rs          # Tauri builder: manage state, register commands
+  tauri.conf.json     # identifier ca.golm.pufferwave, window, frontendDist ../out
+  Cargo.toml          # reqwest(rustls), tokio-util, futures-util, keyring
+next.config.mjs       # output: "export"
 ```
 
-`app/api/chat/route.js` holds the per-provider branches (`ollamaChat`, `anthropicChat`) and the
-uniform-stream normalizer. `.env.local` (gitignored) holds `ANTHROPIC_API_KEY`.
-
-Resist early: component libraries, global state managers, auth, a database. (shadcn/ui is a fine
-*later* choice for chrome polish, not part of the MVP.)
+Resist: component libraries, global state managers, auth. (shadcn/ui is a fine later choice for
+chrome polish.)
 
 ## Build process
 
@@ -100,15 +105,16 @@ route), Slice 1 (dumbest streaming chat, hardcoded model, `status` + `AbortContr
 Slice 2 (real Conversation/Message shapes + versioned persistence), Slice 3 (model picker, system
 prompt, params), Slice 4 (multi-conversation sidebar CRUD).
 
-Post-MVP, slices A–C added the **Anthropic provider**: A (provider-neutral payload + server-side
-uniform-stream normalizer), B (the `@anthropic-ai/sdk` route branch), C (provider-grouped picker +
-per-provider params). Same vertical-slice discipline — each runnable, Ollama never broke.
+Post-MVP, slices A–C added the **Anthropic provider** (provider-neutral payload, uniform-stream
+normalizer, picker). Slices **T0–T3** then migrated to the **Tauri desktop app**: T0 (Rust + Tauri
+shell), T1 (Ollama via a Rust `chat` command over an ipc Channel), T2 (Anthropic via reqwest/SSE +
+keychain), T3 (static export, routes deleted, single `.app`/`.dmg`). Same discipline — each runnable.
 
-## Out of scope for MVP
+## Out of scope / future
 
-Note these as future, do not build: AirLLM, llama.cpp direct connection, RAG, tool calling,
-vision/multimodal, themes, syntax highlighting, auth, database persistence, Tauri packaging.
-The architecture must leave room for them but must not implement them.
+Not built (architecture leaves room): RAG, tool calling, vision/multimodal, markdown rendering,
+the `meta`/logging slice, Windows/Linux builds, Apple notarization. **T4 (optional, next):**
+migrate `localStorage` → SQLite via `tauri-plugin-sql` (uses the `version` field to migrate).
 
 ## Gotchas
 
