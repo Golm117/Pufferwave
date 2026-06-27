@@ -17,6 +17,13 @@ import {
   clearAnthropicKey,
 } from "@/lib/inference";
 import { useChatStore, makeMessage, logFailure } from "@/lib/store";
+import {
+  listExtensions,
+  saveExtension,
+  setExtensionEnabled,
+  deleteExtension,
+} from "@/lib/persistence";
+import Panels, { TEST_EXTENSION } from "./panels";
 
 function deriveTitle(text) {
   const t = text.trim().replace(/\s+/g, " ");
@@ -59,6 +66,8 @@ export default function Page() {
   const [keySet, setKeySet] = useState(false);
   const [keyInput, setKeyInput] = useState("");
   const desktop = isDesktop();
+  const [extensions, setExtensions] = useState([]);
+  const [showPanels, setShowPanels] = useState(false);
   const abortRef = useRef(null);
   const listRef = useRef(null);
   const inputRef = useRef(null);
@@ -101,6 +110,43 @@ export default function Page() {
       cancelled = true;
     };
   }, [desktop]);
+
+  // Load installed extensions (desktop only).
+  useEffect(() => {
+    if (!desktop || !hydrated) return;
+    let cancelled = false;
+    listExtensions().then((rows) => !cancelled && setExtensions(rows));
+    return () => {
+      cancelled = true;
+    };
+  }, [desktop, hydrated]);
+
+  async function refreshExtensions() {
+    setExtensions(await listExtensions());
+  }
+
+  // U1a: the "+ Extension" action installs the hardcoded test panel (LLM authoring is U1b).
+  async function createExtension() {
+    await saveExtension({
+      id: crypto.randomUUID(),
+      ...TEST_EXTENSION,
+      enabled: true,
+      created_at: Date.now(),
+    });
+    await refreshExtensions();
+    setShowPanels(true);
+  }
+
+  async function toggleExtension(id, enabled) {
+    await setExtensionEnabled(id, enabled);
+    await refreshExtensions();
+  }
+
+  async function removeExtension(id) {
+    if (!confirm("Delete this extension?")) return;
+    await deleteExtension(id);
+    await refreshExtensions();
+  }
 
   async function saveKey() {
     const k = keyInput.trim();
@@ -321,6 +367,20 @@ export default function Page() {
             >
               ⚙
             </button>
+            {desktop && hydrated && (
+              <button
+                type="button"
+                onClick={() => setShowPanels((s) => !s)}
+                className={
+                  inputCls +
+                  (showPanels ? " opacity-100" : " opacity-70 hover:opacity-100")
+                }
+                aria-expanded={showPanels}
+                title="Panels (extensions)"
+              >
+                ▦
+              </button>
+            )}
           </div>
         </header>
 
@@ -526,6 +586,15 @@ export default function Page() {
           )}
         </form>
       </main>
+
+      {desktop && showPanels && (
+        <Panels
+          extensions={extensions}
+          onCreate={createExtension}
+          onToggle={toggleExtension}
+          onDelete={removeExtension}
+        />
+      )}
     </div>
   );
 }
