@@ -9,6 +9,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       chat::chat,
       chat::cancel_chat,
+      chat::list_models,
       chat::set_anthropic_key,
       chat::anthropic_key_set,
       chat::clear_anthropic_key

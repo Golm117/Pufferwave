@@ -99,6 +99,33 @@ pub fn clear_anthropic_key() -> Result<(), String> {
     }
 }
 
+// Installed Ollama models, sorted. Replaces the /api/tags proxy.
+#[tauri::command]
+pub async fn list_models() -> Result<Vec<String>, String> {
+    let host = ollama_host();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{host}/api/tags"))
+        .send()
+        .await
+        .map_err(|_| format!("Cannot reach Ollama at {host}."))?;
+    if !resp.status().is_success() {
+        return Err(format!("Ollama responded {}.", resp.status()));
+    }
+    let data: Value = resp.json().await.map_err(|e| e.to_string())?;
+    let mut names: Vec<String> = data
+        .get("models")
+        .and_then(|m| m.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    Ok(names)
+}
+
 #[tauri::command]
 pub async fn cancel_chat(request_id: String, cancels: State<'_, Cancels>) -> Result<(), String> {
     if let Some(tok) = cancels.0.lock().unwrap().get(&request_id) {
