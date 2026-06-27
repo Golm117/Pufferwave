@@ -76,11 +76,26 @@ pub async fn repo_commit(message: String) -> Result<(), String> {
     Ok(())
 }
 
-// Discard ALL uncommitted changes (revert tracked edits + remove new untracked files).
+// Discard ALL uncommitted changes — staged + unstaged tracked edits, plus new untracked
+// files. (reset --hard catches staged changes that `git restore .` would miss.)
 #[tauri::command]
 pub async fn repo_revert() -> Result<(), String> {
     let repo = repo_root();
-    run("git", &["restore", "."], &repo).await?;
+    run("git", &["reset", "--hard", "HEAD"], &repo).await?;
     run("git", &["clean", "-fd"], &repo).await?;
     Ok(())
+}
+
+// Undo the most recent commit (for when a self-edit was already committed).
+#[tauri::command]
+pub async fn repo_undo_last() -> Result<(), String> {
+    run("git", &["reset", "--hard", "HEAD~1"], &repo_root()).await?;
+    Ok(())
+}
+
+// Subject line of HEAD — shown so the user knows what "Undo last commit" would remove.
+#[tauri::command]
+pub async fn repo_head_subject() -> Result<String, String> {
+    let s = run("git", &["log", "-1", "--format=%s"], &repo_root()).await?;
+    Ok(s.trim().to_string())
 }

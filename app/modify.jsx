@@ -12,6 +12,8 @@ import {
   repoStatus,
   repoCommit,
   repoRevert,
+  repoUndoLast,
+  repoHeadSubject,
 } from "@/lib/selfedit";
 
 export default function ModifyDialog({ onClose }) {
@@ -20,6 +22,7 @@ export default function ModifyDialog({ onClose }) {
   const [output, setOutput] = useState("");
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [headSubject, setHeadSubject] = useState("");
   const [commitMsg, setCommitMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -29,13 +32,23 @@ export default function ModifyDialog({ onClose }) {
     } catch {
       /* ignore */
     }
+    try {
+      setHeadSubject(await repoHeadSubject());
+    } catch {
+      /* ignore */
+    }
   }
 
   useEffect(() => {
     let alive = true;
-    repoStatus()
-      .then((s) => alive && setStatus(s))
-      .catch(() => {});
+    Promise.all([
+      repoStatus().catch(() => ""),
+      repoHeadSubject().catch(() => ""),
+    ]).then(([s, h]) => {
+      if (!alive) return;
+      setStatus(s);
+      setHeadSubject(h);
+    });
     return () => {
       alive = false;
     };
@@ -79,6 +92,24 @@ export default function ModifyDialog({ onClose }) {
     setBusy(true);
     try {
       await repoRevert();
+      await refreshStatus();
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function undoLast() {
+    if (
+      !confirm(
+        `Undo the last commit and reset to the one before it?\n\n"${headSubject}"`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await repoUndoLast();
       await refreshStatus();
     } catch (e) {
       setError(String(e?.message || e));
@@ -146,7 +177,10 @@ export default function ModifyDialog({ onClose }) {
                 {status}
               </pre>
             ) : (
-              <p className="text-xs opacity-40">Working tree clean — nothing to commit.</p>
+              <p className="text-xs opacity-40">
+                Working tree clean. Last commit:{" "}
+                <span className="opacity-70">{headSubject || "—"}</span>
+              </p>
             )}
           </div>
 
@@ -161,6 +195,16 @@ export default function ModifyDialog({ onClose }) {
         </div>
 
         <footer className="flex justify-end gap-2 border-t border-white/10 px-4 py-3">
+          {!dirty && headSubject && (
+            <button
+              onClick={undoLast}
+              disabled={busy || phase === "running"}
+              className={btn + " mr-auto bg-white/10 hover:bg-white/20"}
+              title={`Undo: ${headSubject}`}
+            >
+              Undo last commit
+            </button>
+          )}
           {dirty && (
             <button
               onClick={revert}

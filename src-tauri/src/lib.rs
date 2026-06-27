@@ -19,7 +19,9 @@ pub fn run() {
       selfedit::repo_status,
       selfedit::repo_diff,
       selfedit::repo_commit,
-      selfedit::repo_revert
+      selfedit::repo_revert,
+      selfedit::repo_undo_last,
+      selfedit::repo_head_subject
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
