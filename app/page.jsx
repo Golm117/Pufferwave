@@ -17,17 +17,6 @@ import {
   clearAnthropicKey,
 } from "@/lib/inference";
 import { useChatStore, makeMessage, logFailure } from "@/lib/store";
-import {
-  listExtensions,
-  saveExtension,
-  setExtensionEnabled,
-  deleteExtension,
-} from "@/lib/persistence";
-import Panels from "./panels";
-import ExtAuthorDialog from "./ext-author";
-
-// Capable coder for authoring extensions; falls back to the active model if no key.
-const AUTHORING_MODEL = "claude-sonnet-4-6";
 
 function deriveTitle(text) {
   const t = text.trim().replace(/\s+/g, " ");
@@ -70,9 +59,6 @@ export default function Page() {
   const [keySet, setKeySet] = useState(false);
   const [keyInput, setKeyInput] = useState("");
   const desktop = isDesktop();
-  const [extensions, setExtensions] = useState([]);
-  const [showPanels, setShowPanels] = useState(false);
-  const [authoring, setAuthoring] = useState(false);
   const abortRef = useRef(null);
   const listRef = useRef(null);
   const inputRef = useRef(null);
@@ -115,43 +101,6 @@ export default function Page() {
       cancelled = true;
     };
   }, [desktop]);
-
-  // Load installed extensions (desktop only).
-  useEffect(() => {
-    if (!desktop || !hydrated) return;
-    let cancelled = false;
-    listExtensions().then((rows) => !cancelled && setExtensions(rows));
-    return () => {
-      cancelled = true;
-    };
-  }, [desktop, hydrated]);
-
-  async function refreshExtensions() {
-    setExtensions(await listExtensions());
-  }
-
-  // Author the extension with Anthropic if a key is set (best codegen), else the active model.
-  const authoringModel = keySet
-    ? { provider: "anthropic", model: AUTHORING_MODEL }
-    : { provider: active?.provider ?? "ollama", model: active?.model ?? model };
-
-  async function approveExtension(ext) {
-    await saveExtension({ ...ext, enabled: true, created_at: Date.now() });
-    await refreshExtensions();
-    setShowPanels(true);
-    setAuthoring(false);
-  }
-
-  async function toggleExtension(id, enabled) {
-    await setExtensionEnabled(id, enabled);
-    await refreshExtensions();
-  }
-
-  async function removeExtension(id) {
-    if (!confirm("Delete this extension?")) return;
-    await deleteExtension(id);
-    await refreshExtensions();
-  }
 
   async function saveKey() {
     const k = keyInput.trim();
@@ -372,20 +321,6 @@ export default function Page() {
             >
               ⚙
             </button>
-            {desktop && hydrated && (
-              <button
-                type="button"
-                onClick={() => setShowPanels((s) => !s)}
-                className={
-                  inputCls +
-                  (showPanels ? " opacity-100" : " opacity-70 hover:opacity-100")
-                }
-                aria-expanded={showPanels}
-                title="Panels (extensions)"
-              >
-                ▦
-              </button>
-            )}
           </div>
         </header>
 
@@ -591,23 +526,6 @@ export default function Page() {
           )}
         </form>
       </main>
-
-      {desktop && showPanels && (
-        <Panels
-          extensions={extensions}
-          onCreate={() => setAuthoring(true)}
-          onToggle={toggleExtension}
-          onDelete={removeExtension}
-        />
-      )}
-
-      {desktop && authoring && (
-        <ExtAuthorDialog
-          authoringModel={authoringModel}
-          onApprove={approveExtension}
-          onClose={() => setAuthoring(false)}
-        />
-      )}
     </div>
   );
 }
