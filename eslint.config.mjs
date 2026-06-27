@@ -10,6 +10,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Rust/Tauri — never lint the Rust crate or its build artifacts.
+    "src-tauri/**",
   ]),
 ]);
 
