@@ -6,7 +6,13 @@ use chat::Cancels;
 pub fn run() {
   tauri::Builder::default()
     .manage(Cancels::default())
-    .invoke_handler(tauri::generate_handler![chat::chat, chat::cancel_chat])
+    .invoke_handler(tauri::generate_handler![
+      chat::chat,
+      chat::cancel_chat,
+      chat::set_anthropic_key,
+      chat::anthropic_key_set,
+      chat::clear_anthropic_key
+    ])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

@@ -7,7 +7,15 @@
 // plus any trailing assistant reply.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { streamChat, listModels, InferenceError } from "@/lib/inference";
+import {
+  streamChat,
+  listModels,
+  InferenceError,
+  isDesktop,
+  setAnthropicKey,
+  anthropicKeySet,
+  clearAnthropicKey,
+} from "@/lib/inference";
 import { useChatStore, makeMessage, logFailure } from "@/lib/store";
 
 function deriveTitle(text) {
@@ -48,6 +56,9 @@ export default function Page() {
   const [showSettings, setShowSettings] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState("");
+  const [keySet, setKeySet] = useState(false);
+  const [keyInput, setKeyInput] = useState("");
+  const desktop = isDesktop();
   const abortRef = useRef(null);
   const listRef = useRef(null);
   const inputRef = useRef(null);
@@ -78,6 +89,39 @@ export default function Page() {
       cancelled = true;
     };
   }, [hydrated]);
+
+  // Desktop only: reflect whether the Anthropic key is in the keychain.
+  useEffect(() => {
+    if (!desktop) return;
+    let cancelled = false;
+    anthropicKeySet()
+      .then((v) => !cancelled && setKeySet(!!v))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [desktop]);
+
+  async function saveKey() {
+    const k = keyInput.trim();
+    if (!k) return;
+    try {
+      await setAnthropicKey(k);
+      setKeySet(true);
+      setKeyInput("");
+    } catch {
+      /* surfaced on next send as an auth error */
+    }
+  }
+
+  async function clearKey() {
+    try {
+      await clearAnthropicKey();
+      setKeySet(false);
+    } catch {
+      /* no-op */
+    }
+  }
 
   function setParam(key, raw) {
     const next = { ...params };
@@ -300,21 +344,63 @@ export default function Page() {
               />
             </label>
             {provider === "anthropic" ? (
-              <label className="block">
-                <span className="mb-1 block text-xs opacity-60">max_tokens</span>
-                <input
-                  type="number"
-                  step="256"
-                  min="1"
-                  value={params.max_tokens ?? ""}
-                  onChange={(e) => setParam("max_tokens", e.target.value)}
-                  placeholder="4096"
-                  className={inputCls + " w-full"}
-                />
-                <span className="mt-1 block text-xs opacity-40">
-                  temperature is omitted for Anthropic models.
-                </span>
-              </label>
+              <div className="space-y-3">
+                {desktop ? (
+                  <div>
+                    <span className="mb-1 block text-xs opacity-60">
+                      Anthropic API key{" "}
+                      <span className={keySet ? "text-emerald-500" : "text-amber-500"}>
+                        ({keySet ? "set — stored in your keychain" : "not set"})
+                      </span>
+                    </span>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        value={keyInput}
+                        onChange={(e) => setKeyInput(e.target.value)}
+                        placeholder={keySet ? "Replace key…" : "sk-ant-…"}
+                        className={inputCls + " w-full"}
+                      />
+                      <button
+                        type="button"
+                        onClick={saveKey}
+                        disabled={!keyInput.trim()}
+                        className="rounded-xl bg-emerald-500 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-40"
+                      >
+                        Save
+                      </button>
+                      {keySet && (
+                        <button
+                          type="button"
+                          onClick={clearKey}
+                          className={inputCls + " opacity-70 hover:opacity-100"}
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs opacity-40">
+                    Key is read server-side from <code>.env.local</code>.
+                  </p>
+                )}
+                <label className="block">
+                  <span className="mb-1 block text-xs opacity-60">max_tokens</span>
+                  <input
+                    type="number"
+                    step="256"
+                    min="1"
+                    value={params.max_tokens ?? ""}
+                    onChange={(e) => setParam("max_tokens", e.target.value)}
+                    placeholder="4096"
+                    className={inputCls + " w-full"}
+                  />
+                  <span className="mt-1 block text-xs opacity-40">
+                    temperature is omitted for Anthropic models.
+                  </span>
+                </label>
+              </div>
             ) : (
               <div className="flex gap-3">
                 <label className="flex-1">
