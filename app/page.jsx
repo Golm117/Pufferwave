@@ -23,7 +23,11 @@ import {
   setExtensionEnabled,
   deleteExtension,
 } from "@/lib/persistence";
-import Panels, { TEST_EXTENSION } from "./panels";
+import Panels from "./panels";
+import ExtAuthorDialog from "./ext-author";
+
+// Capable coder for authoring extensions; falls back to the active model if no key.
+const AUTHORING_MODEL = "claude-sonnet-4-6";
 
 function deriveTitle(text) {
   const t = text.trim().replace(/\s+/g, " ");
@@ -68,6 +72,7 @@ export default function Page() {
   const desktop = isDesktop();
   const [extensions, setExtensions] = useState([]);
   const [showPanels, setShowPanels] = useState(false);
+  const [authoring, setAuthoring] = useState(false);
   const abortRef = useRef(null);
   const listRef = useRef(null);
   const inputRef = useRef(null);
@@ -125,16 +130,16 @@ export default function Page() {
     setExtensions(await listExtensions());
   }
 
-  // U1a: the "+ Extension" action installs the hardcoded test panel (LLM authoring is U1b).
-  async function createExtension() {
-    await saveExtension({
-      id: crypto.randomUUID(),
-      ...TEST_EXTENSION,
-      enabled: true,
-      created_at: Date.now(),
-    });
+  // Author the extension with Anthropic if a key is set (best codegen), else the active model.
+  const authoringModel = keySet
+    ? { provider: "anthropic", model: AUTHORING_MODEL }
+    : { provider: active?.provider ?? "ollama", model: active?.model ?? model };
+
+  async function approveExtension(ext) {
+    await saveExtension({ ...ext, enabled: true, created_at: Date.now() });
     await refreshExtensions();
     setShowPanels(true);
+    setAuthoring(false);
   }
 
   async function toggleExtension(id, enabled) {
@@ -590,9 +595,17 @@ export default function Page() {
       {desktop && showPanels && (
         <Panels
           extensions={extensions}
-          onCreate={createExtension}
+          onCreate={() => setAuthoring(true)}
           onToggle={toggleExtension}
           onDelete={removeExtension}
+        />
+      )}
+
+      {desktop && authoring && (
+        <ExtAuthorDialog
+          authoringModel={authoringModel}
+          onApprove={approveExtension}
+          onClose={() => setAuthoring(false)}
         />
       )}
     </div>

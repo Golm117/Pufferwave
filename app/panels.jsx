@@ -3,8 +3,13 @@
 // app/panels.jsx — the Panels column + the per-extension sandboxed frame.
 // U1a: proves the runtime with a hardcoded test extension (TEST_EXTENSION).
 
-import { useEffect, useRef, useState } from "react";
-import { getRuntimeLibs, buildSrcdoc, getMediator } from "@/lib/ext-runtime";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  getRuntimeLibs,
+  buildSrcdoc,
+  getMediator,
+  newNonce,
+} from "@/lib/ext-runtime";
 
 // Design tokens injected into each iframe so panels match the app's dark theme.
 const CSS_VARS = "--pw-fg:#e5e5e5";
@@ -29,42 +34,34 @@ export const TEST_EXTENSION = {
 }`,
 };
 
-function ExtensionFrame({ ext }) {
+export function ExtensionFrame({ ext }) {
   const [srcdoc, setSrcdoc] = useState(null);
   const [title, setTitle] = useState(ext.name || "Extension");
   const [height, setHeight] = useState(80);
   const [error, setError] = useState(null);
-  const iframeRef = useRef(null);
-  const winRef = useRef(null);
+  const nonce = useMemo(() => newNonce(), []);
 
+  // Register by nonce on mount (race-free: routing doesn't depend on iframe load timing).
   useEffect(() => {
-    let alive = true;
-    getRuntimeLibs().then((libs) => {
-      if (alive) setSrcdoc(buildSrcdoc(ext.code, libs, CSS_VARS));
-    });
-    return () => {
-      alive = false;
-    };
-  }, [ext.code]);
-
-  useEffect(() => {
-    return () => {
-      if (winRef.current) getMediator().unregister(winRef.current);
-    };
-  }, []);
-
-  function onLoad() {
-    const win = iframeRef.current?.contentWindow;
-    if (!win) return;
-    winRef.current = win;
-    setError(null);
-    getMediator().register(win, {
+    getMediator().register(nonce, {
       ext,
       setTitle,
       setHeight: (h) => setHeight(Math.min(Math.max(h, 40), 600)),
       onError: (e) => setError(e),
+      onReady: () => setError(null),
     });
-  }
+    return () => getMediator().unregister(nonce);
+  }, [nonce, ext]);
+
+  useEffect(() => {
+    let alive = true;
+    getRuntimeLibs().then((libs) => {
+      if (alive) setSrcdoc(buildSrcdoc(ext.code, libs, CSS_VARS, nonce));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [ext.code, nonce]);
 
   return (
     <div className="overflow-hidden rounded-xl border border-black/10 dark:border-white/15">
@@ -73,10 +70,8 @@ function ExtensionFrame({ ext }) {
       </div>
       {srcdoc && (
         <iframe
-          ref={iframeRef}
           sandbox="allow-scripts"
           srcDoc={srcdoc}
-          onLoad={onLoad}
           style={{ width: "100%", height, border: 0, display: "block" }}
           title={title}
         />
