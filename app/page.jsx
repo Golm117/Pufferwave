@@ -607,7 +607,7 @@ export default function Page() {
             <button
               type="submit"
               disabled={!input.trim() || !hydrated}
-              className="rounded-xl bg-violet-500 px-4 py-2 text-sm font-medium text-white hover:bg-violet-600 disabled:opacity-40"
+              className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-40"
             >
               Send
             </button>

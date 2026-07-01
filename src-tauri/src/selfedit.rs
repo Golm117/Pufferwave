@@ -5,8 +5,11 @@
 // the safety net — review the change, then commit (keep) or revert (discard). This only
 // works on a dev checkout (it needs the repo + the `claude` CLI + the toolchain).
 
+use std::env;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
+
+use crate::chat::read_anthropic_key;
 
 // src-tauri's parent is the repo root (the binary is compiled in place in dev).
 fn repo_root() -> PathBuf {
@@ -35,14 +38,38 @@ async fn run(cmd: &str, args: &[&str], dir: &Path) -> Result<String, String> {
 }
 
 // Drive Claude Code headless on the repo. Returns its final transcript text.
+//
+// Auth: spawn `claude` with a CLEAN env — drop any inherited Claude Code session vars and
+// Anthropic base-url/token overrides (which would make a child process fail to
+// authenticate), and authenticate with the user's own Anthropic key from the keychain.
+// This makes self-edit independent of whatever `claude` login state the machine has.
 #[tauri::command]
 pub async fn modify(prompt: String) -> Result<String, String> {
     let repo = repo_root();
+    let key = read_anthropic_key().ok_or_else(|| {
+        "No Anthropic API key set. Add it in Settings (⚙) — self-edit uses it to run Claude Code."
+            .to_string()
+    })?;
+
+    let clean_env: Vec<(String, String)> = env::vars()
+        .filter(|(k, _)| {
+            !(k.starts_with("CLAUDE_CODE_")
+                || k.starts_with("CLAUDE_AGENT_")
+                || k == "CLAUDE_EFFORT"
+                || k == "ANTHROPIC_BASE_URL"
+                || k == "ANTHROPIC_AUTH_TOKEN"
+                || k == "ANTHROPIC_API_KEY")
+        })
+        .collect();
+
     let out = Command::new("claude")
         .arg("-p")
         .arg(&prompt)
         .arg("--dangerously-skip-permissions") // headless: no TTY to approve tools; git is the rollback
         .current_dir(&repo)
+        .env_clear()
+        .envs(clean_env)
+        .env("ANTHROPIC_API_KEY", &key)
         .output()
         .await
         .map_err(|e| {

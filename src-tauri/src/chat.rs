@@ -68,7 +68,7 @@ fn anthropic_entry() -> Result<Entry, String> {
 }
 
 // Keychain first, then ANTHROPIC_API_KEY env (so .env.local still works as a fallback).
-fn read_anthropic_key() -> Option<String> {
+pub fn read_anthropic_key() -> Option<String> {
     if let Ok(entry) = anthropic_entry() {
         if let Ok(k) = entry.get_password() {
             if !k.is_empty() {
